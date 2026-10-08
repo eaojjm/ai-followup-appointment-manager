@@ -1,0 +1,68 @@
+{
+  "name": "Workflow Error Alerts",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "1b128bcc-26d1-522c-8aee-adcdf6f59a56",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{   '🚨 Ошибка n8n\\n\\n' +   'Workflow: ' + ($json.workflow?.name || 'неизвестен') + '\\n' +   'Node: ' + ($json.execution?.lastNodeExecuted || 'не определена') + '\\n' +   'Ошибка: ' + (     $json.execution?.error?.message ||     $json.trigger?.error?.message ||     'нет текста ошибки'   ) +   ($json.execution?.url     ? '\\nExecution: ' + $json.execution.url     : '') }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        0
+      ],
+      "id": "6d32aa2b-bba5-5620-945b-43ad93f3fec8",
+      "name": "Notify Manager About Workflow Error"
+    },
+    {
+      "parameters": {
+        "content": "## Контроль ошибок workflow\nПолучает системную ошибку из подключённых workflow и отправляет менеджеру уведомление с названием процесса, проблемной нодой и текстом ошибки.",
+        "height": 352,
+        "width": 400,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -32,
+        -176
+      ],
+      "typeVersion": 1,
+      "id": "d4367740-c0a8-5d17-8cc4-af30fa563f53",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Notify Manager About Workflow Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

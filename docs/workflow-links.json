@@ -1,0 +1,68 @@
+[
+  {
+    "caller": "Appointment Booking",
+    "node": "Log Booking Bot Reply",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  },
+  {
+    "caller": "Appointment Lifecycle",
+    "node": "Call 'Log Bot Message'",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  },
+  {
+    "caller": "Appointment Lifecycle",
+    "node": "Call 'Log Bot Message'1",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  },
+  {
+    "caller": "Follow-up Engine",
+    "node": "Call 'Log Bot Message'",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Call 'Appointment Booking'",
+    "target": "Appointment Booking",
+    "placeholder": "REPLACE_WITH_APPOINTMENT_BOOKING_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Call 'Appointment Lifecycle'",
+    "target": "Appointment Lifecycle",
+    "placeholder": "REPLACE_WITH_APPOINTMENT_LIFECYCLE_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Call 'Follow-up Engine'",
+    "target": "Follow-up Engine",
+    "placeholder": "REPLACE_WITH_FOLLOWUP_ENGINE_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Call 'Appointment Booking' - Callback",
+    "target": "Appointment Booking",
+    "placeholder": "REPLACE_WITH_APPOINTMENT_BOOKING_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Call 'Appointment Booking' - Booking Request",
+    "target": "Appointment Booking",
+    "placeholder": "REPLACE_WITH_APPOINTMENT_BOOKING_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Log Bot Reply",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  },
+  {
+    "caller": "Telegram Router + Reply Handling",
+    "node": "Log Manager Cancellation",
+    "target": "Log Bot Message",
+    "placeholder": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+  }
+]

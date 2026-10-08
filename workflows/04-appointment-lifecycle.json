@@ -1,0 +1,1229 @@
+{
+  "name": "Appointment Lifecycle",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with due as (\n  select\n    a.id as appointment_id,\n    a.lead_id,\n    l.name,\n    l.telegram_chat_id,\n    a.starts_at,\n    a.ends_at\n  from public.appointments a\n  join public.leads l\n    on l.id = a.lead_id\n  where a.status = 'scheduled'\n    and a.reminder_24h_sent_at is null\n    and (\n      a.reminder_24h_claimed_at is null\n      or a.reminder_24h_claimed_at < now() - interval '15 minutes'\n    )\n    and a.starts_at > now()\n    and a.starts_at <= now() + interval '24 hours'\n    and l.telegram_chat_id is not null\n  order by a.starts_at asc\n  for update of a skip locked\n)\nupdate public.appointments a\nset\n  reminder_24h_claimed_at = now(),\n  updated_at = now()\nfrom due\nwhere a.id = due.appointment_id\nreturning\n  a.id as appointment_id,\n  a.lead_id,\n  due.name,\n  due.telegram_chat_id,\n  a.starts_at,\n  a.ends_at,\n  a.reminder_24h_claimed_at,\n  to_char(\n    a.starts_at at time zone 'Asia/Barnaul',\n    'DD.MM.YYYY'\n  ) as local_date,\n  to_char(\n    a.starts_at at time zone 'Asia/Barnaul',\n    'HH24:MI'\n  ) as local_start_time;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        400,
+        2256
+      ],
+      "id": "04a4d4b2-5482-5b2c-a5c6-7b61f1d009a3",
+      "name": "Get Due Appointment Reminders"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ 'Напоминаем о вашей записи.\\n\\n' + 'Дата: ' + $json.local_date + '\\n' + 'Время: ' + $json.local_start_time }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        2256
+      ],
+      "id": "5441b978-8ba5-5d69-8bd3-d1f8859fba67",
+      "name": "Send Appointment Reminder",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  reminder_24h_sent_at = now(),\n  reminder_24h_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'scheduled'\n  and reminder_24h_sent_at is null\n  and reminder_24h_claimed_at is not null\nreturning\n  id,\n  reminder_24h_sent_at;",
+        "options": {
+          "queryReplacement": "={{ [$('Get Due Appointment Reminders').item.json.appointment_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1248,
+        2144
+      ],
+      "id": "f03fad0c-e4c2-5f0a-810c-95585a3285a2",
+      "name": "Mark Appointment Reminder Sent",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        2256
+      ],
+      "id": "45eebdff-b4dd-5d71-b2e4-d6a01d4943d6",
+      "name": "Schedule Trigger (Appointment Reminders)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with due as (\n  select\n    a.id as appointment_id,\n    a.lead_id,\n    l.name,\n    l.telegram_chat_id,\n    a.starts_at,\n    a.ends_at\n  from public.appointments a\n  join public.leads l\n    on l.id = a.lead_id\n  where a.status = 'scheduled'\n    and a.ends_at <= now()\n    and a.outcome_prompt_sent_at is null\n    and (\n      a.outcome_prompt_claimed_at is null\n      or a.outcome_prompt_claimed_at < now() - interval '15 minutes'\n    )\n    and l.telegram_chat_id is not null\n  order by a.ends_at asc\n  for update of a skip locked\n)\nupdate public.appointments a\nset\n  outcome_prompt_claimed_at = now(),\n  updated_at = now()\nfrom due\nwhere a.id = due.appointment_id\nreturning\n  a.id as appointment_id,\n  a.lead_id,\n  due.name,\n  due.telegram_chat_id,\n  a.starts_at,\n  a.ends_at,\n  a.outcome_prompt_claimed_at,\n  to_char(\n    a.starts_at at time zone 'Asia/Barnaul',\n    'DD.MM.YYYY'\n  ) as local_date,\n  to_char(\n    a.starts_at at time zone 'Asia/Barnaul',\n    'HH24:MI'\n  ) as local_start_time;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2624,
+        2256
+      ],
+      "id": "c982cc2b-4187-52a2-9117-0dbd84b40cbc",
+      "name": "Get Pending Appointment Outcomes"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ 'Запись завершилась.\\n\\n' + 'Клиент: ' + $json.name + '\\n' + 'Дата: ' + $json.local_date + '\\n' + 'Время: ' + $json.local_start_time + '\\n\\n' + 'Какой результат встречи?' }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Состоялась",
+                    "additionalFields": {
+                      "callback_data": "={{ 'appt_completed|' + $json.appointment_id }}"
+                    }
+                  },
+                  {
+                    "text": "❌ Не пришёл",
+                    "additionalFields": {
+                      "callback_data": "={{ 'appt_no_show|' + $json.appointment_id }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3184,
+        2256
+      ],
+      "id": "6378a5cf-281a-56b1-8c63-9c0236d97e83",
+      "name": "Send Appointment Outcome Prompt",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  outcome_prompt_sent_at = now(),\n  outcome_prompt_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'scheduled'\n  and outcome_prompt_sent_at is null\n  and outcome_prompt_claimed_at is not null\nreturning\n  id,\n  status,\n  outcome_prompt_sent_at;",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Get Pending Appointment Outcomes').item.json.appointment_id\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3472,
+        2144
+      ],
+      "id": "914efe17-4acb-5331-8ecc-c75ad6e19933",
+      "name": "Mark Outcome Prompt Sent",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        2352,
+        2256
+      ],
+      "id": "f5738faf-2721-5e41-929f-54f32d1f2e80",
+      "name": "Schedule Trigger (Appointment Outcomes)"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "appt_completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "63f84dda-cc4e-448e-b51c-acc0d65db2ce"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Completed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f2375d5e-ae75-4b9c-8262-79d67f05c540",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "appt_no_show",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No Show"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "42d3d45b-c702-45b3-b519-617e7470d96c",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "send_no_show_fu",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Send No Show Follow-up"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        400,
+        656
+      ],
+      "id": "1713a087-e463-5b03-a64b-e4279e9df4a4",
+      "name": "Lifecycle Action"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select *\nfrom public.set_appointment_outcome(\n  $1::uuid,\n  $2::text\n);",
+        "options": {
+          "queryReplacement": "={{\n[\n  $json.appointment_id,\n  $json.action === 'appt_completed'\n    ? 'completed'\n    : $json.action === 'appt_no_show'\n      ? 'no_show'\n      : 'invalid'\n]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        688,
+        512
+      ],
+      "id": "1b520a53-145c-5cfa-9a79-81b2992cf0f3",
+      "name": "Set Appointment Outcome"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "4a236329-3d47-4587-9a1c-45be823221be"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Completed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "867eb95c-0ab8-41a5-88d4-16baa8cb46db",
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "no_show",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No Show"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b6e99625-312b-4934-86f9-4aaf821fe1ab",
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "invalid_state",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid State"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "420a2550-7d48-4d69-9901-814afd87b9dd",
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "appointment_not_found",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not Found"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "40a0032e-ce1a-4147-960f-4e83c9e9f4e6",
+                    "leftValue": "={{ $json.result }}",
+                    "rightValue": "invalid_outcome",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid Outcome"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        960,
+        512
+      ],
+      "id": "103e5b2a-535e-5801-8fdf-6bfe13634153",
+      "name": "Appointment Outcome Result"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').item.json.chat_id }}",
+        "text": "✅ Встреча отмечена как состоявшая.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        256
+      ],
+      "id": "a85cf882-cda4-5902-8333-a2b48e95eca2",
+      "name": "Confirm Appointment Completed"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action"
+            },
+            {
+              "name": "appointment_id"
+            },
+            {
+              "name": "chat_id"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        128,
+        656
+      ],
+      "id": "ae61cfd1-a2e5-5529-8ef6-b4eea5251737",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').item.json.chat_id }}",
+        "text": "❌ Встреча отмечена как no-show.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        480
+      ],
+      "id": "64e5b8c8-6784-5984-9e07-3feeac4535fd",
+      "name": "Confirm Appointment No Show"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').item.json.chat_id }}",
+        "text": "Отправить клиенту сообщение после no-show?",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📩 Отправить клиенту",
+                    "additionalFields": {
+                      "callback_data": "={{ 'send_no_show_fu|' + $('Set Appointment Outcome').item.json.appointment_id }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        480
+      ],
+      "id": "fbd380c5-d573-5719-a063-97d29d48127f",
+      "name": "Ask No Show Follow-up Approval"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments a\nset\n  no_show_followup_claimed_at = now(),\n  updated_at = now()\nfrom public.leads l\nwhere a.id = $1::uuid\n  and l.id = a.lead_id\n  and a.status = 'no_show'\n  and a.no_show_followup_sent_at is null\n  and (\n    a.no_show_followup_claimed_at is null\n    or a.no_show_followup_claimed_at < now() - interval '15 minutes'\n  )\n  and l.telegram_chat_id is not null\nreturning\n  a.id as appointment_id,\n  a.lead_id,\n  l.name,\n  l.telegram_chat_id,\n  a.no_show_followup_claimed_at;",
+        "options": {
+          "queryReplacement": "={{ [$json.appointment_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2352,
+        512
+      ],
+      "id": "51645233-ac93-54a6-bfdb-88f74028cbad",
+      "name": "Get No Show Follow-up Target"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.name + ', добрый день. Не получилось встретиться в запланированное время. Хотите подобрать другое время?' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2912,
+        512
+      ],
+      "id": "9e0d373a-3448-5613-8b0e-ad714950db95",
+      "name": "Send No Show Follow-up to Client",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  no_show_followup_sent_at = now(),\n  no_show_followup_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'no_show'\n  and no_show_followup_sent_at is null\n  and no_show_followup_claimed_at is not null\nreturning\n  id,\n  lead_id,\n  no_show_followup_sent_at;",
+        "options": {
+          "queryReplacement": "={{ [\n  $('Get No Show Follow-up Target').item.json.appointment_id\n] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3184,
+        384
+      ],
+      "id": "a39ed5d0-f94f-5332-b9f4-af618e1b2b5a",
+      "name": "Mark No Show Follow-up Sent",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').item.json.chat_id }}",
+        "text": "Эта кнопка уже неактуальна.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        720
+      ],
+      "id": "44fa6bec-1323-5147-8f21-6ed4e5484b32",
+      "name": "Invalid State Message"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').item.json.chat_id }}",
+        "text": "Не удалось найти данные для этой записи. Обратитесь к менеджеру, чтобы начать запись заново.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        960
+      ],
+      "id": "ade17c8b-1c1e-562c-84d3-d0429d55154c",
+      "name": "Lead Not Found Message"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  reminder_24h_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'scheduled'\n  and reminder_24h_sent_at is null\n  and reminder_24h_claimed_at is not null\nreturning\n  id,\n  reminder_24h_claimed_at;",
+        "options": {
+          "queryReplacement": "={{ [   $('Get Due Appointment Reminders').item.json.appointment_id ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1248,
+        2400
+      ],
+      "id": "fa410111-8853-5a0c-bcff-bddebf2890cb",
+      "name": "Release Appointment Reminder Claim"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "102876fd-71b0-4f9d-903c-b3a47f324f6a",
+              "leftValue": "={{\n  !!$json.appointment_id\n  &&\n  !!$json.telegram_chat_id\n  &&\n  !!$json.reminder_24h_claimed_at\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        688,
+        2256
+      ],
+      "id": "69ce2f0b-5f3c-5f65-8a3d-d50e8f4820be",
+      "name": "Appointment Reminder Claimed?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "03fa9831-3f15-4d9a-bb88-a32d15532bd8",
+              "leftValue": "={{   !!$json.appointment_id   &&   !!$json.telegram_chat_id   &&   !!$json.outcome_prompt_claimed_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2912,
+        2256
+      ],
+      "id": "db8e1798-df70-50d2-9988-78387c97fb10",
+      "name": "Outcome Prompt Claimed?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  outcome_prompt_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'scheduled'\n  and outcome_prompt_sent_at is null\n  and outcome_prompt_claimed_at is not null\nreturning\n  id,\n  outcome_prompt_claimed_at;",
+        "options": {
+          "queryReplacement": "={{ [   $('Get Pending Appointment Outcomes').item.json.appointment_id ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3472,
+        2400
+      ],
+      "id": "1eb26618-0c72-55ff-975b-7f505d37dd7f",
+      "name": "Release Outcome Prompt Claim"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "09f662bc-d056-4823-a013-bf3649641995",
+              "leftValue": "={{\n  !!$json.appointment_id\n  &&\n  !!$json.telegram_chat_id\n  &&\n  !!$json.no_show_followup_claimed_at\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2624,
+        512
+      ],
+      "id": "cccc8bbb-af80-51b0-b571-e27b59fd5b42",
+      "name": "No Show Follow-up Claimed?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.appointments\nset\n  no_show_followup_claimed_at = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'no_show'\n  and no_show_followup_sent_at is null\n  and no_show_followup_claimed_at is not null\nreturning\n  id,\n  no_show_followup_claimed_at;",
+        "options": {
+          "queryReplacement": "={{ [   $('Get No Show Follow-up Target').item.json.appointment_id ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3184,
+        640
+      ],
+      "id": "c0ce7255-e742-5015-8054-d4c082c685b3",
+      "name": "Release No Show Follow-up Claim"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Get Due Appointment Reminders').item.json.lead_id }}",
+            "chat_id": "={{ String($json.result.chat.id) }}",
+            "telegram_message_id": "={{ String($json.result.message_id) }}",
+            "text": "={{ $json.result.text || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "telegram_message_id",
+              "displayName": "telegram_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1520,
+        2144
+      ],
+      "id": "fc0a13d5-1d22-5fda-8d17-ec9d6dd60499",
+      "name": "Call 'Log Bot Message'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Get No Show Follow-up Target').item.json.lead_id }}",
+            "chat_id": "={{ String($json.result.chat.id) }}",
+            "telegram_message_id": "={{ String($json.result.message_id) }}",
+            "text": "={{ $json.result.text || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "telegram_message_id",
+              "displayName": "telegram_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3472,
+        384
+      ],
+      "id": "1e7d1f70-fec5-5e80-84eb-1870189b47c9",
+      "name": "Call 'Log Bot Message'1"
+    },
+    {
+      "parameters": {
+        "content": "## 1. Результат встречи\nПолучает действие менеджера, атомарно сохраняет completed или no_show и возвращает отдельные ответы для успеха, неверного состояния и отсутствующей записи.",
+        "height": 1200,
+        "width": 1800,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "293e0c00-6190-5df8-ba45-83ad6f748f96",
+      "name": "ZONE 1 - Результат встречи"
+    },
+    {
+      "parameters": {
+        "content": "## 2. Follow-up после no-show\nПосле подтверждения менеджером резервирует отправку, пишет клиенту предложение выбрать другое время, фиксирует успех или освобождает claim при ошибке.",
+        "height": 800,
+        "width": 1520,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2224,
+        160
+      ],
+      "id": "88f46dde-e193-5ae2-8a28-7daefc7df4ed",
+      "name": "ZONE 2 - Follow-up после no-show"
+    },
+    {
+      "parameters": {
+        "content": "## 3. Напоминание о записи\nSchedule Trigger выбирает подошедшие записи. Claim защищает от повторной отправки, после Telegram-сообщения результат фиксируется или claim освобождается.",
+        "height": 800,
+        "width": 1800,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1936
+      ],
+      "id": "2706a468-e494-575b-b8bd-8a24eea9614b",
+      "name": "ZONE 3 - Напоминание о записи"
+    },
+    {
+      "parameters": {
+        "content": "## 4. Запрос результата встречи\nПосле окончания записи просит менеджера отметить результат встречи. Claim предотвращает дубли, затем сохраняется отправка или освобождается резервирование.",
+        "height": 800,
+        "width": 1520,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2224,
+        1936
+      ],
+      "id": "63dbacca-9ba8-5d08-b3fa-d5a48e45f29d",
+      "name": "ZONE 4 - Запрос результата встречи"
+    }
+  ],
+  "connections": {
+    "Get Due Appointment Reminders": {
+      "main": [
+        [
+          {
+            "node": "Appointment Reminder Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Appointment Reminder": {
+      "main": [
+        [
+          {
+            "node": "Mark Appointment Reminder Sent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Call 'Log Bot Message'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Appointment Reminder Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Appointment Reminders)": {
+      "main": [
+        [
+          {
+            "node": "Get Due Appointment Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Appointment Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Outcome Prompt Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Appointment Outcome Prompt": {
+      "main": [
+        [
+          {
+            "node": "Mark Outcome Prompt Sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Outcome Prompt Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Appointment Outcomes)": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Appointment Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lifecycle Action": {
+      "main": [
+        [
+          {
+            "node": "Set Appointment Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Appointment Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Appointment Outcome Result",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get No Show Follow-up Target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Outcome Result": {
+      "main": [
+        [
+          {
+            "node": "Confirm Appointment Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirm Appointment No Show",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid State Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lead Not Found Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid State Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Lifecycle Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Appointment No Show": {
+      "main": [
+        [
+          {
+            "node": "Ask No Show Follow-up Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get No Show Follow-up Target": {
+      "main": [
+        [
+          {
+            "node": "No Show Follow-up Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send No Show Follow-up to Client": {
+      "main": [
+        [
+          {
+            "node": "Mark No Show Follow-up Sent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Call 'Log Bot Message'1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release No Show Follow-up Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Appointment Outcome": {
+      "main": [
+        [
+          {
+            "node": "Appointment Outcome Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Reminder Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Send Appointment Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome Prompt Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Send Appointment Outcome Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Show Follow-up Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Send No Show Follow-up to Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_WITH_WORKFLOW_ERROR_ALERTS_ID",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

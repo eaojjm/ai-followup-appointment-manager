@@ -1,0 +1,922 @@
+{
+  "name": "Follow-up Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "952c3934-20ac-5b71-8985-3b28bd03d65d",
+      "name": "Schedule Trigger (Follow Ups)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -160,
+        144
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select *\nfrom public.leads\nwhere status = 'active'\n  and next_followup_at <= now()\n  and followup_count < 3\n  and pending_followup_text is null\n  and pending_followup_created_at is null\n  and pending_followup_status is null;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        64,
+        144
+      ],
+      "id": "01474670-9ce5-5855-9561-28e5cbf0bc39",
+      "name": "Get Due Follow-ups"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5-mini",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "739e3d70-377a-550e-9e81-f7c3e9d41392",
+      "name": "OpenAI Follow Up",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        304,
+        352
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Имя клиента:\n{{ $json.name }}\n\nКоличество уже отправленных follow-up:\n{{ $json.followup_count }}\n\nКонтекст предыдущего общения:\n{{ $json.conversation_summary }}\n\nСгенерируй следующий follow-up согласно этапу.",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Ты помощник менеджера по продажам.\n\nТвоя задача - писать короткие персонализированные follow-up сообщения клиентам, которые перестали отвечать.\n\nИспользуй только предоставленный контекст.\nНе придумывай услуги, предложения, материалы, скидки, встречи или другие возможности, которых нет в контексте.\nНе добавляй выгоды, эффекты, обещания или выводы, если они прямо не следуют из контекста.\nНе предлагай созвон, встречу, демонстрацию, материалы или другой конкретный следующий шаг, если он прямо не указан в контексте.\nЕсли следующий шаг не указан, просто уточни, актуальна ли тема и хочет ли клиент продолжить диалог.\n\nСтиль:\n- естественный;\n- короткий;\n- без давления;\n- без канцелярита;\n- без упоминания AI;\n- максимум 3-4 коротких предложения.\n\nЭтап зависит от followup_count:\n\n0 - первое мягкое напоминание и попытка вернуть клиента в диалог.\n1 - второе касание: кратко напомни ценность обсуждаемой темы и уточни, актуален ли вопрос.\n2 - финальное касание: вежливо сообщи, что больше беспокоить не будешь, но клиент может вернуться к разговору позже.\n\nВыводи только готовое сообщение клиенту."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "7c238078-febe-5717-b052-0b56607389b0",
+      "name": "Generate Follow-up",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        304,
+        144
+      ],
+      "typeVersion": 1.7
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  pending_followup_text = $1,\n  pending_followup_created_at = now(),\n  pending_followup_status = 'pending',\n  pending_followup_version = pending_followup_version + 1,\n  updated_at = now()\nwhere id = $2::uuid\n  and status = 'active'\n  and next_followup_at <= now()\n  and followup_count < 3\n  and pending_followup_text is null\n  and pending_followup_created_at is null\n  and pending_followup_status is null\nreturning\n  id,\n  name,\n  pending_followup_text as text,\n  pending_followup_created_at,\n  pending_followup_status,\n  pending_followup_version;",
+        "options": {
+          "queryReplacement": "={{ [$json.text, $('Get Due Follow-ups').item.json.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        752,
+        144
+      ],
+      "id": "60bfe3d7-f45b-59db-82eb-73a7376059be",
+      "name": "Save Follow-up Draft"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.MANAGER_TELEGRAM_CHAT_ID }}",
+        "text": "={{ \n\"🟡 Новый follow-up на согласование\\n\\n\" +\n\"Клиент: \" + $('Get Due Follow-ups').item.json.name + \"\\n\\n\" +\n\"Сообщение клиенту:\\n\" + $json.text\n}}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Отправить",
+                    "additionalFields": {
+                      "callback_data": "={{ 'send|' + $json.id + '|' + $json.pending_followup_version }}"
+                    }
+                  },
+                  {
+                    "text": "⏰ Отложить",
+                    "additionalFields": {
+                      "callback_data": "={{ 'delay|' + $json.id + '|' + $json.pending_followup_version }}"
+                    }
+                  },
+                  {
+                    "text": "❌ Закрыть",
+                    "additionalFields": {
+                      "callback_data": "={{ 'close|' + $json.id + '|' + $json.pending_followup_version }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        976,
+        144
+      ],
+      "id": "f5193db9-888e-5abc-854f-6b9d2901072b",
+      "name": "Send Approval to Manager"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action"
+            },
+            {
+              "name": "lead_id"
+            },
+            {
+              "name": "chat_id"
+            },
+            {
+              "name": "followup_version"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        -240
+      ],
+      "id": "4f2e9af5-9338-5f9f-89c0-7ae627fee8c4",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "d15accc8-8787-45db-af3e-903c3bd6447a"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Send"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "78771bd7-52e7-4ada-b3c7-773a8f1612b7",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "delay",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Delay"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ddd71baa-5ece-49cb-9fb2-ac3fb41d57f3",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "close",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Close"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        64,
+        -256
+      ],
+      "id": "8067df59-946c-53be-8841-7c6fb39be9ee",
+      "name": "Follow-up Action"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  next_followup_at = now() + interval '1 day',\n  pending_followup_text = null,\n  pending_followup_created_at = null,\n  pending_followup_status = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'active'\n  and pending_followup_status = 'pending'\n  and pending_followup_version = $2::integer\n  and pending_followup_text is not null\nreturning\n  id,\n  name,\n  next_followup_at;",
+        "options": {
+          "queryReplacement": "={{\n  [\n    $json.lead_id,\n    Number($json.followup_version || -1)\n  ]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        304,
+        -384
+      ],
+      "id": "2271da20-e9e9-59bd-8078-c8633a43eda4",
+      "name": "Delay Follow-up"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').first().json.chat_id }}",
+        "text": "={{ '❌ ' + $json.name + ' закрыт. Follow-up больше отправляться не будет.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        -224
+      ],
+      "id": "9beccf89-1387-5a0e-9df2-68ef0da1f025",
+      "name": "Confirm Close"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').first().json.chat_id }}",
+        "text": "={{ '⏰ Follow-up для ' + $json.name + ' отложен на 24 часа.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        -384
+      ],
+      "id": "b214e677-9240-5f06-8402-124553a90e8b",
+      "name": "Confirm Delay"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  status = 'closed',\n  next_followup_at = null,\n  pending_followup_text = null,\n  pending_followup_created_at = null,\n  pending_followup_status = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'active'\n  and pending_followup_status = 'pending'\n  and pending_followup_version = $2::integer\n  and pending_followup_text is not null\nreturning\n  id,\n  name,\n  status;;",
+        "options": {
+          "queryReplacement": "={{\n  [\n    $json.lead_id,\n    Number($json.followup_version || -1)\n  ]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        304,
+        -224
+      ],
+      "id": "2cecd4b1-0303-58d1-8e29-c3f411b0dede",
+      "name": "Close Lead"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  pending_followup_status = 'sending',\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'active'\n  and pending_followup_status = 'pending'\n  and pending_followup_version = $2::integer\n  and pending_followup_text is not null\n  and telegram_chat_id is not null\nreturning\n  id,\n  name,\n  email,\n  phone,\n  telegram_chat_id,\n  followup_count,\n  pending_followup_text,\n  pending_followup_version,\n  pending_followup_status;",
+        "options": {
+          "queryReplacement": "={{\n  [\n    $json.lead_id,\n    Number($json.followup_version || -1)\n  ]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        304,
+        -544
+      ],
+      "id": "259451d1-7e0e-5b71-8a87-effc2fd32e68",
+      "name": "Get Approved Follow-up",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.pending_followup_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        -544
+      ],
+      "id": "7e1bcf46-93e7-57ab-bbf1-47e01cc04df2",
+      "name": "Send Follow-up to Client",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  followup_count = followup_count + 1,\n  last_contact_at = now(),\n  next_followup_at = case\n    when followup_count + 1 < 3\n      then now() + interval '2 days'\n    else null\n  end,\n  pending_followup_text = null,\n  pending_followup_created_at = null,\n  pending_followup_status = null,\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'active'\n  and pending_followup_status = 'sending'\n  and pending_followup_version = $2::integer\nreturning\n  id,\n  name,\n  followup_count,\n  last_contact_at,\n  next_followup_at,\n  pending_followup_text,\n  pending_followup_status,\n  pending_followup_version;",
+        "options": {
+          "queryReplacement": "={{\n  [\n    $('Get Approved Follow-up').item.json.id,\n    $('Get Approved Follow-up').item.json.pending_followup_version\n  ]\n}}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        976,
+        -704
+      ],
+      "id": "acab50f5-7da3-56b6-8c68-f84670225184",
+      "name": "Update Lead After Send",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('When Executed by Another Workflow').first().json.chat_id }}",
+        "text": "={{ '✅ Follow-up для ' + $json.name + ' отправлен.' + ($json.next_followup_at ? ' Следующий follow-up запланирован автоматически.' : ' Это был последний follow-up, следующий не запланирован.') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        -704
+      ],
+      "id": "50661c56-af05-5f18-8a94-be8cc0963cd5",
+      "name": "Confirm Send"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        320
+      ],
+      "id": "4368ab6e-de8c-5ddf-bfb9-e05a77dc946d",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update public.leads\nset\n  pending_followup_status = 'pending',\n  updated_at = now()\nwhere id = $1::uuid\n  and status = 'active'\n  and pending_followup_status = 'sending'\n  and pending_followup_version = $2::integer\nreturning\n  id,\n  name,\n  pending_followup_status,\n  pending_followup_version;",
+        "options": {
+          "queryReplacement": "={{   [     $('Get Approved Follow-up').item.json.id,     $('Get Approved Follow-up').item.json.pending_followup_version   ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        976,
+        -544
+      ],
+      "id": "939ef166-2602-5dd0-bd4b-e0cd01101482",
+      "name": "Release Follow-up Claim"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ca9286c4-2e03-4162-8ab3-ba611cadccad",
+              "leftValue": "={{\n  $json.pending_followup_status === 'sending'\n  &&\n  !!$json.telegram_chat_id\n  &&\n  !!$json.pending_followup_text\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        -544
+      ],
+      "id": "31466ce9-93d2-5605-bf01-da86a25c3764",
+      "name": "Follow-up Claimed?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "35835609-99ee-4bce-8966-d757a4f03685",
+              "leftValue": "={{\n  !!$json.id\n  &&\n  !!$json.next_followup_at\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        -384
+      ],
+      "id": "05f6415c-e70b-534d-bee9-3d15d867d1cb",
+      "name": "Delay Applied?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9001c756-0503-43e7-a885-8ce423d5c4de",
+              "leftValue": "={{\n  !!$json.id\n  &&\n  $json.status === 'closed'\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        -224
+      ],
+      "id": "b4c2a8a9-cafd-598a-b4b9-37477938f515",
+      "name": "Lead Closed?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_WITH_LOG_BOT_MESSAGE_ID"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('Get Approved Follow-up').item.json.id }}",
+            "chat_id": "={{ String($json.result.chat.id) }}",
+            "telegram_message_id": "={{ String($json.result.message_id) }}",
+            "text": "={{ $json.result.text || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "telegram_message_id",
+              "displayName": "telegram_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        976,
+        -848
+      ],
+      "id": "5eebb50f-9671-598d-b4fc-070764778e9e",
+      "name": "Call 'Log Bot Message'"
+    },
+    {
+      "parameters": {
+        "content": "## 1. Генерация follow-up\nНаходит лидов с наступившим follow-up, генерирует персонализированный черновик, сохраняет его и отправляет менеджеру на согласование.",
+        "height": 416,
+        "width": 1392,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -224,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "59caf548-1c76-5f1b-9b95-e2f0fbb1890f",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## 2. Действие менеджера\nПолучает нажатие кнопки менеджера и направляет выполнение в одну из веток: отправить, отложить или закрыть лида.",
+        "height": 320,
+        "width": 416,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -224,
+        -400
+      ],
+      "typeVersion": 1,
+      "id": "f3ed5075-561b-5eea-8835-ad3466643413",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## 3. Отправка follow-up\nРезервирует одобренное сообщение от повторной отправки, отправляет его клиенту, обновляет состояние лида и сохраняет сообщение в истории.",
+        "height": 528,
+        "width": 1136,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        256,
+        -928
+      ],
+      "typeVersion": 1,
+      "id": "f4ce40f6-3039-5b78-be7e-01ba3bb88cb1",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "width": 688
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        256,
+        -400
+      ],
+      "typeVersion": 1,
+      "id": "548c0b8b-5d83-513e-9dd9-7c5c8d84548e",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "width": 688,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        256,
+        -240
+      ],
+      "typeVersion": 1,
+      "id": "943ee699-498e-58e6-97dd-33591f5c9ed8",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "# 4. Отложить follow-up\nПереносит следующую попытку контакта на новую дату и подтверждает менеджеру успешное изменение.",
+        "width": 464
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        928,
+        -400
+      ],
+      "typeVersion": 1,
+      "id": "3e3eaffc-5e3a-5973-bd4f-e7660d1a2954",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "## 5. Закрыть лида\nЗавершает автоматические follow-up для лида и подтверждает менеджеру закрытие.",
+        "width": 464,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        928,
+        -240
+      ],
+      "typeVersion": 1,
+      "id": "b34fcacf-7943-5a26-82a6-94514003f930",
+      "name": "Sticky Note6"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (Follow Ups)": {
+      "main": [
+        [
+          {
+            "node": "Get Due Follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Follow Up": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Follow-up",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Save Follow-up Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Due Follow-ups": {
+      "main": [
+        [
+          {
+            "node": "Generate Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Follow-up Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Approval to Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delay Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Delay Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close Lead": {
+      "main": [
+        [
+          {
+            "node": "Lead Closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up Action": {
+      "main": [
+        [
+          {
+            "node": "Get Approved Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delay Follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Close Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Approved Follow-up": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up to Client": {
+      "main": [
+        [
+          {
+            "node": "Update Lead After Send",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Call 'Log Bot Message'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Follow-up Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead After Send": {
+      "main": [
+        [
+          {
+            "node": "Confirm Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get Due Follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up to Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delay Applied?": {
+      "main": [
+        [
+          {
+            "node": "Confirm Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Closed?": {
+      "main": [
+        [
+          {
+            "node": "Confirm Close",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_WITH_WORKFLOW_ERROR_ALERTS_ID",
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": -1
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

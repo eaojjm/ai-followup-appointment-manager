@@ -1,0 +1,89 @@
+{
+  "name": "Log Bot Message",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "lead_id"
+            },
+            {
+              "name": "chat_id"
+            },
+            {
+              "name": "telegram_message_id"
+            },
+            {
+              "name": "text"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -112,
+        -48
+      ],
+      "id": "afc637be-49e8-569d-ba3d-4f5c8cd0e2c0",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into public.conversation_messages (\n  lead_id,\n  handoff_id,\n  sender_type,\n  recipient_type,\n  message_type,\n  text,\n  telegram_chat_id,\n  telegram_message_id\n)\nvalues (\n  $1::uuid,\n\n  (\n    select hs.id\n    from public.handoff_sessions hs\n    where hs.lead_id = $1::uuid\n      and hs.status = 'open'\n    order by hs.created_at desc\n    limit 1\n  ),\n\n  'bot',\n  'client',\n  'message',\n  $2,\n  $3::bigint,\n  $4::bigint\n)\non conflict (telegram_chat_id, telegram_message_id)\nwhere telegram_chat_id is not null\n  and telegram_message_id is not null\ndo nothing\nreturning id;",
+        "options": {
+          "queryReplacement": "={{ [   $json.lead_id,   $json.text,   $json.chat_id,   $json.telegram_message_id ] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        112,
+        -48
+      ],
+      "id": "8f54c850-c769-5c31-ab4b-f7160aa4ba9b",
+      "name": "Save Bot Message",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "content": "## Журнал сообщений бота\nПолучает данные об отправленном сообщении из других workflow и сохраняет его в PostgreSQL для истории диалога.",
+        "height": 288,
+        "width": 464,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -176,
+        -192
+      ],
+      "typeVersion": 1,
+      "id": "56a56a80-e62e-5d5a-a29e-84abd4652ca6",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Save Bot Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}
