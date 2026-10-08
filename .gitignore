@@ -1,0 +1,23 @@
+# Local secrets and runtime payloads never belong in this repository.
+.env
+.env.*
+!.env.example
+*credentials*.json
+*execution*.json
+*.log
+*.sqlite*
+*.db
+*.dump
+*.backup
+*.tsrct
+*.mp4
+*.mov
+*.m4a
+*.mp3
+*.wav
+private-audit/
+.tesseract-work/
+__pycache__/
+node_modules/
+.DS_Store
+Thumbs.db
